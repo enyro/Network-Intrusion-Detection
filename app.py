@@ -1,8 +1,9 @@
-from flask import Flask, request, jsonify 
+from flask import Flask, request, jsonify, send_file
 import numpy as np 
 import json
 from keras.models import model_from_json
 from flask_cors import CORS
+import pandas as pd
 
 app = Flask(__name__)
 CORS(app)
@@ -13,6 +14,105 @@ with open('model/model_i.json', 'r') as json_file:
 loaded_model = model_from_json(loaded_model_json)
  
 loaded_model.load_weights("model/model_i_weights.weights.h5")
+
+required_columns = [
+    'duration',
+    'protocol_type',
+    'src_bytes',
+    'dst_bytes',
+    'land',
+    'wrong_fragment',
+    'urgent',
+    'hot',
+    'num_failed_logins',
+    'logged_in',
+    'lnum_compromised',
+    'lroot_shell',
+    'lsu_attempted',
+    'lnum_root',
+    'lnum_file_creations',
+    'lnum_shells',
+    'lnum_access_files',
+    'is_guest_login',
+    'count',
+    'srv_count',
+    'serror_rate',
+    'srv_serror_rate',
+    'rerror_rate',
+    'srv_rerror_rate',
+    'same_srv_rate',
+    'diff_srv_rate',
+    'srv_diff_host_rate',
+    'dst_host_count',
+    'dst_host_srv_count',
+    'dst_host_same_srv_rate',
+    'dst_host_diff_srv_rate',
+    'dst_host_same_src_port_rate',
+    'dst_host_srv_diff_host_rate',
+    'dst_host_serror_rate',
+    'dst_host_srv_serror_rate',
+    'dst_host_rerror_rate',
+    'dst_host_srv_rerror_rate',
+    'service',
+    'flag'
+]
+training_columns = [
+    'duration',
+    'protocol_type',
+    'src_bytes',
+    'dst_bytes',
+    'land',
+    'wrong_fragment',
+    'urgent',
+    'hot',
+    'num_failed_logins',
+    'logged_in',
+    'lnum_compromised',
+    'lroot_shell',
+    'lsu_attempted',
+    'lnum_root',
+    'lnum_file_creations',
+    'lnum_shells',
+    'lnum_access_files',
+    'is_guest_login',
+    'count',
+    'srv_count',
+    'serror_rate',
+    'srv_serror_rate',
+    'rerror_rate',
+    'srv_rerror_rate',
+    'same_srv_rate',
+    'diff_srv_rate',
+    'srv_diff_host_rate',
+    'dst_host_count',
+    'dst_host_srv_count',
+    'dst_host_same_srv_rate',
+    'dst_host_diff_srv_rate',
+    'dst_host_same_src_port_rate',
+    'dst_host_srv_diff_host_rate',
+    'dst_host_serror_rate',
+    'dst_host_srv_serror_rate',
+    'dst_host_rerror_rate',
+    'dst_host_srv_rerror_rate',
+    'service_encoded',
+    'flag_encoded'
+]
+flag_mapping = {
+            'OTH': 0,
+            'REJ': 1,
+            'RSTO': 2,
+            'RSTOS0': 3,
+            'RSTR': 4,
+            'S0': 5,
+            'S1': 6,
+            'S2': 7,
+            'S3': 8,
+            'SF': 9,
+            'SH': 10
+        }
+ 
+with open('services.json', "r") as json_file:
+    service_mapping = json.load(json_file) 
 
 def handle_exception(e): 
     response = jsonify({"code":0, "error": "Internal Server Error"})
@@ -32,29 +132,12 @@ def predict():
             json_data['protocol_type'] = 3
         else :
             json_data['protocol_type'] = 0
-
-        flag_mapping = {
-            'OTH': 0,
-            'REJ': 1,
-            'RSTO': 2,
-            'RSTOS0': 3,
-            'RSTR': 4,
-            'S0': 5,
-            'S1': 6,
-            'S2': 7,
-            'S3': 8,
-            'SF': 9,
-            'SH': 10
-        }
-
+ 
         if json_data['flag'] in flag_mapping:
             json_data['flag_encoded'] = flag_mapping[json_data['flag']]
         else:
             json_data['flag_encoded'] = -1
-    
-        with open('services.json', "r") as json_file:
-            service_mapping = json.load(json_file)
-        
+     
         if json_data['service'] in service_mapping:
             json_data['service_encoded'] = service_mapping[json_data['service']]
         else:
@@ -113,9 +196,43 @@ def predict():
             pred_value = 'Good'
 
         return jsonify({'code':1, 'prediction': pred_value}) 
-        # return jsonify({'code':1, 'prediction': 15}) 
     except Exception as e:
         return handle_exception(e) 
 
+@app.route('/api/csv_predict', methods=['POST'])
+def csv_predict():
+    try:
+        if 'file' not in request.files:
+            return jsonify({"code":0, "error": 'No file part'}) 
+        
+        file = request.files['file']
+        
+        # Check if the file is CSV
+        if file.filename == '':
+            return jsonify({"code":0, "error":  'No selected file'}) 
+        
+        if file and file.filename.endswith('.csv'):
+            df = pd.read_csv(file)
+            if set(required_columns).issubset(df.columns):
+                df.loc[df['protocol_type'] == 'tcp', 'protocol_type'] = 1
+                df.loc[df['protocol_type'] == 'udp', 'protocol_type'] = 2
+                df.loc[df['protocol_type'] == 'icmp', 'protocol_type'] = 3
+
+                df['flag_encoded'] = df['flag'].map(flag_mapping)
+                df['service_encoded'] = df['service'].map(service_mapping)
+                df = df[training_columns] 
+
+                predictions = loaded_model.predict(df)
+                df['prediction'] = ['Bad' if pred == 1 else 'Good' for pred in predictions]
+
+                csv_text = df.to_csv(index=False)
+                return jsonify({"code":1, "csv":  csv_text}) 
+            else:
+                return jsonify({"code":0, "error":  'CSV is missing some required columns'})   
+        else:
+            return jsonify({"code":0, "error":  'Invalid file format'})  
+    except Exception as e:
+        return handle_exception(e) 
+ 
 if __name__ == '__main__':
     app.run(debug=True)
