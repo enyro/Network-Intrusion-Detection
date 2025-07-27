@@ -30,7 +30,7 @@ A Flask-based REST API that predicts whether incoming network connections are **
 ```bash
 # Clone the repo
 git clone https://github.com/enyro/Network-Intrusion-Detection.git
-cd network-intrusion-detector
+cd Network-Intrusion-Detection
 
 # Set up a virtual environment (optional)
 python -m venv venv
